@@ -1,19 +1,31 @@
 [project]
 name = "codex-session-patcher"
-version = "1.0.0"
+version = "1.1.0"
 description = "轻量级 Codex CLI 会话重写工具，绕过 AI 拒绝回复"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Your Name", email = "your@email.com"}
 ]
 keywords = ["codex", "cli", "session", "patcher"]
+dependencies = []
 
 [project.scripts]
-codex-patcher = "codex_patcher:main"
+codex-patcher = "codex_session_patcher.cli:main"
+codex-patcher-web = "web.backend.main:run_server"
+
+[tool.setuptools.packages.find]
+include = ["codex_patcher", "codex_session_patcher", "web"]
 
 [project.optional-dependencies]
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+    "websockets>=11.0",
+    "httpx>=0.24.0"
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0"
