@@ -10,7 +10,7 @@
         <template #icon>
           <n-icon><TrashOutline /></n-icon>
         </template>
-        {{ hasRefusalOnly ? '执行清理' : hasThinkingOnly ? '清理 Thinking' : '清理推理内容' }}
+        {{ hasRefusalOnly ? $t('action.clean') : hasThinkingOnly ? $t('preview.cleanThinking') : $t('preview.cleanReasoning') }}
       </n-button>
 
       <n-button
@@ -21,8 +21,8 @@
         <template #icon>
           <n-icon><SparklesOutline /></n-icon>
         </template>
-        {{ sessionStore.aiRewrite ? 'AI 已生成' : 'AI 分析' }}
-        <n-tag v-if="!settingsStore.aiEnabled" size="small" type="info" style="margin-left: 4px">未配置</n-tag>
+        {{ sessionStore.aiRewrite ? $t('enhance.aiGenerated') : $t('enhance.aiAnalyze') }}
+        <n-tag v-if="!settingsStore.aiEnabled" size="small" type="info" style="margin-left: 4px">{{ $t('enhance.ctfNotInstalled') }}</n-tag>
         <n-tag v-else-if="sessionStore.aiRewrite" size="small" type="success" style="margin-left: 4px">✓</n-tag>
       </n-button>
 
@@ -34,7 +34,7 @@
         <template #icon>
           <n-icon><ArrowUndoOutline /></n-icon>
         </template>
-        还原
+        {{ $t('action.restore') }}
       </n-button>
     </div>
 
@@ -48,12 +48,14 @@
 
 <script setup>
 import { ref, computed, onMounted, h } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useMessage, useDialog, NSelect } from 'naive-ui'
 import { TrashOutline, SparklesOutline, ArrowUndoOutline } from '@vicons/ionicons5'
 import { useSessionStore } from '../stores/sessionStore'
 import { useLogStore } from '../stores/logStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
+const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 const sessionStore = useSessionStore()
@@ -95,27 +97,24 @@ async function handlePatch() {
   if (!preview?.has_changes && (reasoningCount > 0 || thinkingCount > 0)) {
     // 无拒绝内容，只有推理/thinking 内容
     const details = []
-    if (reasoningCount > 0) details.push(`${reasoningCount} 条推理内容`)
-    if (thinkingCount > 0) details.push(`${thinkingCount} 个 Thinking Block`)
+    if (reasoningCount > 0) details.push(`${reasoningCount} ${t('preview.reasoningBlocks')}`)
+    if (thinkingCount > 0) details.push(`${thinkingCount} Thinking Block`)
     dialog.info({
-      title: '确认清理',
-      content: `会话 "${session?.id || sessionStore.selectedId}" 未检测到拒绝回复。\n\n但包含 ${details.join('、')}，清理后将删除这些内容。\n\n备份将保存到原文件同目录，扩展名为 .bak\n\n是否继续？`,
-      positiveText: '确认清理',
-      negativeText: '取消',
+      title: t('action.confirmClean'),
+      content: `${t('action.confirmCleanMessage')}\n\n${details.join('、')}`,
+      positiveText: t('common.confirm'),
+      negativeText: t('common.cancel'),
       onPositiveClick: () => {
         executePatch()
       }
     })
   } else {
     // 有拒绝内容
-    const detailLines = [`拒绝回复: ${changesCount} 处`]
-    if (reasoningCount > 0) detailLines.push(`推理内容: ${reasoningCount} 条`)
-    if (thinkingCount > 0) detailLines.push(`Thinking Block: ${thinkingCount} 个`)
     dialog.warning({
-      title: '确认执行清理',
-      content: `即将清理会话 "${session?.id || sessionStore.selectedId}" 中的拒绝内容。\n\n${detailLines.join('\n')}\n\n备份将保存到原文件同目录，扩展名为 .bak\n\n此操作不可撤销，是否继续？`,
-      positiveText: '确认执行',
-      negativeText: '取消',
+      title: t('action.confirmClean'),
+      content: `${t('action.confirmCleanMessage')}`,
+      positiveText: t('common.confirm'),
+      negativeText: t('common.cancel'),
       onPositiveClick: () => {
         executePatch()
       }
@@ -126,7 +125,7 @@ async function handlePatch() {
 async function executePatch() {
   patching.value = true
   lastResult.value = null
-  logStore.addLog('开始执行清理...', 'info')
+  logStore.addLog(t('action.cleaning'), 'info')
 
   try {
     const result = await sessionStore.patchSession()
@@ -137,7 +136,7 @@ async function executePatch() {
       logStore.addLog(result.message, 'success')
 
       if (result.backup_path) {
-        logStore.addLog(`备份已保存: ${result.backup_path}`, 'info')
+        logStore.addLog(`${t('action.backupCreated')}: ${result.backup_path}`, 'info')
       }
     } else {
       message.error(result.message)
@@ -172,7 +171,7 @@ async function handleRestore() {
   try {
     const backups = await sessionStore.listBackups()
     if (!backups || backups.length === 0) {
-      message.warning('没有可用的备份')
+      message.warning(t('action.noBackup'))
       return
     }
 
@@ -184,10 +183,10 @@ async function handleRestore() {
 
     selectedBackup = backupOptions[0].value
     dialog.warning({
-      title: '选择备份进行还原',
+      title: t('action.selectBackup'),
       content: () => {
         return h('div', {}, [
-          h('p', { style: 'margin-bottom: 12px; color: #999;' }, `共找到 ${backups.length} 个备份，选择一个进行还原：`),
+          h('p', { style: 'margin-bottom: 12px; color: #999;' }, `${t('action.selectBackup')} (${backups.length})`),
           h(NSelect, {
             options: backupOptions,
             defaultValue: backupOptions[0].value,
@@ -195,11 +194,11 @@ async function handleRestore() {
           })
         ])
       },
-      positiveText: '确认还原',
-      negativeText: '取消',
+      positiveText: t('action.confirmRestore'),
+      negativeText: t('common.cancel'),
       onPositiveClick: async () => {
         const filename = selectedBackup || backupOptions[0].value
-        logStore.addLog(`正在还原备份: ${filename}`, 'info')
+        logStore.addLog(`Restoring: ${filename}`, 'info')
         try {
           const result = await sessionStore.restoreSession(null, filename)
           if (result.success) {
@@ -217,7 +216,7 @@ async function handleRestore() {
       }
     })
   } catch (error) {
-    message.error('获取备份列表失败: ' + error.message)
+    message.error(error.message)
     logStore.addLog(error.message, 'error')
   } finally {
     restoring.value = false
@@ -234,16 +233,16 @@ function formatBackupSize(bytes) {
 
 async function handleAIAnalyze() {
   if (!canAIRewrite.value) return
-  logStore.addLog('正在请求 AI 改写...', 'info')
+  logStore.addLog(t('enhance.rewriteLoading'), 'info')
   try {
     const result = await sessionStore.requestAIRewrite()
     if (result.success) {
       const itemCount = result.items?.length || 0
-      message.success(`AI 已生成 ${itemCount} 条改写内容`)
-      logStore.addLog(`AI 已改写 ${itemCount} 处拒绝内容`, 'success')
+      message.success(`${t('enhance.aiGenerated')} ${itemCount}`)
+      logStore.addLog(`AI rewrite: ${itemCount} items`, 'success')
     } else {
-      message.error(result.error || 'AI 改写失败')
-      logStore.addLog(result.error || 'AI 改写失败', 'error')
+      message.error(result.error || t('error.rewriteFailed'))
+      logStore.addLog(result.error || t('error.rewriteFailed'), 'error')
     }
   } catch (error) {
     message.error(error.message)

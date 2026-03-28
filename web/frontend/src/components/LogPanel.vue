@@ -5,7 +5,7 @@
         <n-icon class="toggle-icon" :class="{ expanded: !logStore.collapsed }">
           <ChevronUpOutline />
         </n-icon>
-        <span class="title">日志面板</span>
+        <span class="title">{{ $t('log.title') }}</span>
         <n-tag v-if="logStore.logs.length > 0" size="small">
           {{ logStore.logs.length }}
         </n-tag>
@@ -16,7 +16,7 @@
         size="small"
         @click.stop="logStore.clearLogs"
       >
-        清空
+        {{ $t('common.clearAll') }}
       </n-button>
     </div>
 
@@ -32,7 +32,7 @@
           <span class="level">[{{ log.type.toUpperCase() }}]</span>
           <span class="message">{{ log.message }}</span>
         </div>
-        <n-empty v-if="logStore.logs.length === 0" description="暂无日志" size="small" />
+        <n-empty v-if="logStore.logs.length === 0" :description="$t('log.empty')" size="small" />
       </div>
     </n-collapse-transition>
   </div>

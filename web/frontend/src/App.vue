@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider :theme="darkTheme" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <n-message-provider>
       <n-dialog-provider>
         <n-layout class="app-layout">
@@ -20,6 +20,9 @@
             </n-icon>
             <span class="title">Codex Session Patcher</span>
           </div>
+          <div class="header-right">
+            <LocaleSwitch />
+          </div>
         </n-layout-header>
 
         <!-- Tab 导航 -->
@@ -28,25 +31,25 @@
             <template #icon>
               <n-icon><ListOutline /></n-icon>
             </template>
-            会话管理
+            {{ $t('nav.sessions') }}
           </n-tab>
           <n-tab name="enhance">
             <template #icon>
               <n-icon><SparklesOutline /></n-icon>
             </template>
-            提示词增强
+            {{ $t('nav.enhance') }}
           </n-tab>
           <n-tab name="settings">
             <template #icon>
               <n-icon><SettingsOutline /></n-icon>
             </template>
-            设置
+            {{ $t('nav.settings') }}
           </n-tab>
           <n-tab name="help">
             <template #icon>
               <n-icon><HelpCircleOutline /></n-icon>
             </template>
-            帮助
+            {{ $t('nav.help') }}
           </n-tab>
         </n-tabs>
 
@@ -97,8 +100,9 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { darkTheme, zhCN, dateZhCN, NDialogProvider } from 'naive-ui'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { darkTheme, zhCN, dateZhCN, enUS, dateEnUS, NDialogProvider } from 'naive-ui'
 import { CodeSlash, SettingsOutline, MenuOutline, ListOutline, SparklesOutline, HelpCircleOutline } from '@vicons/ionicons5'
 import SessionList from './components/SessionList.vue'
 import PreviewPanel from './components/PreviewPanel.vue'
@@ -107,16 +111,29 @@ import LogPanel from './components/LogPanel.vue'
 import PromptEnhancePanel from './components/PromptEnhancePanel.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import HelpPanel from './components/HelpPanel.vue'
+import LocaleSwitch from './components/LocaleSwitch.vue'
 import { useSessionStore } from './stores/sessionStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useLogStore } from './stores/logStore'
+import { useLocaleStore } from './stores/localeStore'
 
+const { t } = useI18n()
 const activeTab = ref('sessions')
 const sidebarCollapsed = ref(false)
 const isMobile = ref(false)
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 const logStore = useLogStore()
+const localeStore = useLocaleStore()
+
+// Naive UI locale
+const naiveLocale = computed(() => {
+  return localeStore.currentLocale === 'en-US' ? enUS : zhCN
+})
+
+const naiveDateLocale = computed(() => {
+  return localeStore.currentLocale === 'en-US' ? dateEnUS : dateZhCN
+})
 
 // 初始化：加载会话列表
 sessionStore.fetchSessions()
@@ -218,6 +235,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .menu-toggle {

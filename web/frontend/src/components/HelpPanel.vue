@@ -46,8 +46,34 @@
       <n-card title="CTF/渗透模式对普通任务的影响" size="small">
         <n-space vertical>
           <n-alert type="info" :bordered="false">
-            CTF/渗透模式只对使用 <code>codex -p ctf</code> 启动的会话生效，普通会话不受影响。
+            提供两种模式：<strong>Profile 模式</strong>仅对指定会话生效，<strong>全局模式</strong>对所有新会话生效。
           </n-alert>
+
+          <n-h4>两种模式对比</n-h4>
+          <n-table :bordered="false" :single-line="false" size="small">
+            <thead>
+              <tr>
+                <th>模式</th>
+                <th>生效范围</th>
+                <th>启用方式</th>
+                <th>适用场景</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><n-tag type="info" size="small">Profile</n-tag></td>
+                <td>仅当前会话</td>
+                <td><code>codex -p ctf</code></td>
+                <td>偶尔打 CTF</td>
+              </tr>
+              <tr>
+                <td><n-tag type="warning" size="small">全局</n-tag></td>
+                <td>所有新会话</td>
+                <td>点击「全局启用」</td>
+                <td>持续安全测试</td>
+              </tr>
+            </tbody>
+          </n-table>
 
           <n-h4>启用后的变化</n-h4>
           <n-ul>
@@ -58,9 +84,9 @@
 
           <n-h4>建议</n-h4>
           <n-ul>
-            <n-li>打 CTF 时启用，日常开发时禁用</n-li>
-            <n-li>使用 <code>codex -p ctf</code> 显式指定模式</n-li>
-            <n-li>如果只用普通模式，不加 -p 参数即可</n-li>
+            <n-li>偶尔打 CTF：使用 <code>codex -p ctf</code></n-li>
+            <n-li>持续安全测试：启用全局模式，结束后禁用</n-li>
+            <n-li>日常开发：禁用全局模式即可</n-li>
           </n-ul>
         </n-space>
       </n-card>

@@ -1,7 +1,7 @@
 <template>
   <div class="session-list">
     <div class="list-header">
-      <span class="title">会话列表</span>
+      <span class="title">{{ $t('session.title') }}</span>
       <div class="header-actions">
         <n-button text size="small" @click="refresh" :loading="loading">
           <template #icon>
@@ -18,7 +18,7 @@
         :class="{ active: sessionStore.activeTab === 'claude_code' }"
         @click="sessionStore.setActiveTab('claude_code')"
       >
-        Claude Code
+        {{ $t('session.format_claude') }}
         <span class="tab-count">{{ sessionStore.claudeSessions.length }}</span>
       </button>
       <button
@@ -26,7 +26,7 @@
         :class="{ active: sessionStore.activeTab === 'codex' }"
         @click="sessionStore.setActiveTab('codex')"
       >
-        Codex
+        {{ $t('session.format_codex') }}
         <span class="tab-count">{{ sessionStore.codexSessions.length }}</span>
       </button>
     </div>
@@ -35,7 +35,7 @@
     <div class="search-box">
       <n-input
         v-model:value="searchQuery"
-        placeholder="搜索会话 ID..."
+        :placeholder="$t('session.search')"
         clearable
         size="small"
       >
@@ -54,7 +54,7 @@
         :secondary="filterMode === 'all'"
         @click="filterMode = 'all'"
       >
-        全部 {{ visibleSessions.length }}
+        {{ $t('session.all') }} {{ visibleSessions.length }}
       </n-button>
       <n-button
         size="tiny"
@@ -62,7 +62,7 @@
         :secondary="filterMode === 'refusal'"
         @click="filterMode = 'refusal'"
       >
-        有拒绝 {{ refusalCount }}
+        {{ $t('session.hasRefusal') }} {{ refusalCount }}
       </n-button>
       <n-button
         v-if="settingsStore.showAllSessions"
@@ -71,7 +71,7 @@
         :secondary="filterMode === 'clean'"
         @click="filterMode = 'clean'"
       >
-        无拒绝 {{ visibleSessions.length - refusalCount }}
+        {{ $t('session.noRefusal') }} {{ visibleSessions.length - refusalCount }}
       </n-button>
       <n-button
         size="tiny"
@@ -79,7 +79,7 @@
         :secondary="filterMode === 'patched'"
         @click="filterMode = 'patched'"
       >
-        已清理 {{ patchedCount }}
+        {{ $t('session.cleaned') }} {{ patchedCount }}
       </n-button>
     </div>
 
@@ -88,7 +88,7 @@
         <n-spin size="medium" />
       </div>
       <div v-else class="list-content">
-        <n-empty v-if="filteredSessions.length === 0" description="暂无会话" />
+        <n-empty v-if="filteredSessions.length === 0" :description="$t('session.empty')" />
 
         <!-- 按日期分组显示 -->
         <div v-for="group in groupedSessions" :key="group.label" class="date-group">
@@ -128,7 +128,7 @@
                     type="info"
                     size="small"
                   >
-                    已清理
+                    {{ $t('session.cleaned') }}
                   </n-tag>
                   <n-icon
                     class="expand-icon"
@@ -142,19 +142,15 @@
 
               <div v-show="expandedIds.has(session.id)" class="session-detail">
                 <div v-if="session.project_path" class="detail-item">
-                  <span class="label">项目:</span>
+                  <span class="label">{{ $t('session.project') }}:</span>
                   <span class="value" :title="session.project_path">{{ truncate(session.project_path, 30) }}</span>
                 </div>
                 <div class="detail-item">
-                  <span class="label">文件名:</span>
-                  <span class="value" :title="session.filename">{{ truncate(session.filename, 30) }}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="label">大小:</span>
+                  <span class="label">{{ $t('session.size') }}:</span>
                   <span class="value">{{ formatSize(session.size) }}</span>
                 </div>
                 <div class="detail-item">
-                  <span class="label">修改时间:</span>
+                  <span class="label">{{ $t('session.modified') }}:</span>
                   <span class="value">{{ session.mtime }}</span>
                 </div>
               </div>
@@ -168,14 +164,16 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RefreshOutline, ChevronDownOutline, SearchOutline } from '@vicons/ionicons5'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
+const { t } = useI18n()
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 const expandedIds = reactive(new Set())
-const expandedGroups = reactive(new Set(['今天', '昨天']))
+const expandedGroups = reactive(new Set([t('session.today'), t('session.yesterday')]))
 
 const searchQuery = ref('')
 const filterMode = ref('refusal')  // 'all' | 'refusal' | 'clean' | 'patched'
@@ -260,13 +258,13 @@ const groupedSessions = computed(() => {
     const mtimeDate = session.mtime.split(' ')[0]  // "2026-03-27 03:21:00" → "2026-03-27"
     let label
     if (mtimeDate === today) {
-      label = '今天'
+      label = t('session.today')
     } else if (mtimeDate === yesterday) {
-      label = '昨天'
+      label = t('session.yesterday')
     } else if (mtimeDate >= weekAgo) {
-      label = '本周'
+      label = t('session.thisWeek')
     } else {
-      label = '更早'
+      label = t('session.earlier')
     }
 
     if (!groups[label]) {
@@ -275,7 +273,7 @@ const groupedSessions = computed(() => {
     groups[label].push(session)
   }
 
-  const order = ['今天', '昨天', '本周', '更早']
+  const order = [t('session.today'), t('session.yesterday'), t('session.thisWeek'), t('session.earlier')]
   return order
     .filter(label => groups[label])
     .map(label => ({
