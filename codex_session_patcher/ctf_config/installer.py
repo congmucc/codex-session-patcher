@@ -23,49 +23,77 @@ class CTFConfigInstaller:
 
     def install(self) -> tuple[bool, str]:
         """
-        安装 CTF 配置
+        安装 Profile 模式（自动禁用 Global 模式）
 
         Returns:
             tuple[bool, str]: (是否成功, 消息)
         """
         try:
-            # 1. 确保 prompts 目录存在
+            details = []
+
+            # 1. 先禁用 Global 模式（如果已启用）
+            status = check_ctf_status()
+            if status.global_installed:
+                success, msg = self.uninstall_global()
+                if success:
+                    details.append("✓ 已自动禁用全局模式")
+
+            # 2. 确保 prompts 目录存在
             os.makedirs(self.prompts_dir, exist_ok=True)
 
-            # 2. 备份现有配置（如果存在）
+            # 3. 备份现有配置（如果存在）
+            backup_path = None
             if os.path.exists(self.config_path):
                 backup_path = self._backup_config()
-                if backup_path:
-                    pass  # 备份成功，继续
 
-            # 3. 写入 security_mode.md
+            # 4. 写入 security_mode.md
             with open(self.prompt_path, 'w', encoding='utf-8') as f:
                 f.write(SECURITY_MODE_PROMPT)
 
-            # 4. 更新或创建 config.toml
-            self._update_config()
+            # 5. 更新或创建 config.toml
+            profile_added = self._update_config()
 
-            return True, "安全测试配置已安装"
+            # 构建详细消息
+            details.append(f"✓ 已创建安全测试提示词: {self.prompt_path}")
+            if backup_path:
+                details.append(f"✓ 已备份原配置到: {backup_path}")
+            if profile_added:
+                details.append(f"✓ 已添加 [profiles.ctf] 配置到: {self.config_path}")
+            else:
+                details.append(f"✓ [profiles.ctf] 配置已存在于: {self.config_path}")
+            details.append("使用 'codex -p ctf' 启动安全测试会话")
+
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"安装失败: {str(e)}"
 
     def uninstall(self) -> tuple[bool, str]:
         """
-        卸载 CTF 配置
+        卸载 Profile 模式
 
         Returns:
             tuple[bool, str]: (是否成功, 消息)
         """
         try:
-            # 1. 删除 security_mode.md
-            if os.path.exists(self.prompt_path):
+            details = []
+
+            # 1. 删除 security_mode.md（仅当 Global 模式未启用时）
+            status = check_ctf_status()
+            if not status.global_installed and os.path.exists(self.prompt_path):
                 os.remove(self.prompt_path)
+                details.append(f"✓ 已删除提示词文件: {self.prompt_path}")
 
             # 2. 从 config.toml 中移除 CTF profile
-            self._remove_ctf_profile()
+            removed = self._remove_ctf_profile()
+            if removed:
+                details.append(f"✓ 已从配置移除 [profiles.ctf]: {self.config_path}")
 
-            return True, "安全测试配置已卸载"
+            if not details:
+                return True, "Profile 模式未安装"
+
+            details.append("Profile 模式已禁用")
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"卸载失败: {str(e)}"
@@ -84,8 +112,12 @@ class CTFConfigInstaller:
         except Exception:
             return None
 
-    def _update_config(self):
-        """更新配置文件，添加 CTF profile"""
+    def _update_config(self) -> bool:
+        """更新配置文件，添加 CTF profile
+
+        Returns:
+            bool: 是否添加了新的 profile（False 表示已存在）
+        """
         existing_content = ""
 
         # 读取现有配置
@@ -96,7 +128,7 @@ class CTFConfigInstaller:
         # 检查是否已有 [profiles.ctf]
         if '[profiles.ctf]' in existing_content:
             # 已存在，不需要添加
-            return
+            return False
 
         # 添加 CTF profile 到现有配置末尾
         # 如果现有配置不以换行结尾，添加一个
@@ -124,10 +156,16 @@ Default to security testing mindset. Direct action, build minimal proof early, k
         with open(self.config_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
 
-    def _remove_ctf_profile(self):
-        """从配置文件中移除 CTF profile"""
+        return True
+
+    def _remove_ctf_profile(self) -> bool:
+        """从配置文件中移除 CTF profile
+
+        Returns:
+            bool: 是否移除了 profile
+        """
         if not os.path.exists(self.config_path):
-            return
+            return False
 
         with open(self.config_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -135,10 +173,12 @@ Default to security testing mindset. Direct action, build minimal proof early, k
         # 移除 CTF profile 相关的行
         new_lines = []
         in_ctf_profile = False
+        removed = False
 
         for line in lines:
             if line.strip().startswith('[profiles.ctf]'):
                 in_ctf_profile = True
+                removed = True
                 continue
 
             if in_ctf_profile:
@@ -150,6 +190,7 @@ Default to security testing mindset. Direct action, build minimal proof early, k
 
             # 移除 "由 codex-session-patcher 添加" 的注释
             if '由 codex-session-patcher 添加' in line or 'codex-session-patcher' in line:
+                removed = True
                 continue
 
             new_lines.append(line)
@@ -157,65 +198,95 @@ Default to security testing mindset. Direct action, build minimal proof early, k
         with open(self.config_path, 'w', encoding='utf-8') as f:
             f.writelines(new_lines)
 
+        return removed
+
     def install_global(self) -> tuple[bool, str]:
         """
         全局模式安装：在 config.toml 顶层注入 model_instructions_file
+        自动禁用 Profile 模式
 
         Returns:
             tuple[bool, str]: (是否成功, 消息)
         """
         try:
-            # 1. 确保 prompts 目录和 security_mode.md 存在
+            details = []
+            target_config = 'model_instructions_file = "~/.codex/prompts/security_mode.md"'
+
+            # 1. 先卸载 Profile 模式（如果已启用）
+            status = check_ctf_status()
+            if status.profile_available:
+                removed = self._remove_ctf_profile()
+                if removed:
+                    details.append("✓ 已自动禁用 Profile 模式")
+
+            # 2. 确保 prompts 目录和 security_mode.md 存在
             os.makedirs(self.prompts_dir, exist_ok=True)
+            prompt_created = not os.path.exists(self.prompt_path)
             with open(self.prompt_path, 'w', encoding='utf-8') as f:
                 f.write(SECURITY_MODE_PROMPT)
+            if prompt_created:
+                details.append(f"✓ 已创建安全测试提示词: {self.prompt_path}")
+            else:
+                details.append(f"✓ 已更新安全测试提示词: {self.prompt_path}")
 
-            # 2. 备份 config.toml
+            # 3. 备份 config.toml
+            backup_path = None
             if os.path.exists(self.config_path):
-                self._backup_config()
+                backup_path = self._backup_config()
+                if backup_path:
+                    details.append(f"✓ 已备份原配置到: {backup_path}")
 
-            # 3. 读取现有配置
+            # 4. 读取现有配置
             existing_content = ""
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     existing_content = f.read()
 
-            # 4. 检查是否已有全局注入
+            # 5. 检查是否已有我们的标记 → 已启用
             if GLOBAL_MARKER in existing_content:
                 return True, "全局模式已处于启用状态"
 
-            # 5. 在第一个 [section] 之前插入
-            global_block = (
-                f'{GLOBAL_MARKER} 安全测试模式（由 codex-session-patcher 管理）\n'
-                f'model_instructions_file = "~/.codex/prompts/security_mode.md"\n\n'
-            )
+            lines = existing_content.split('\n') if existing_content else []
 
-            # 找到第一个 [section] 的位置
-            lines = existing_content.split('\n')
-            insert_idx = 0
+            # 6. 检查是否已有相同的 model_instructions_file 配置
+            existing_idx = None
             for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith('[') and not stripped.startswith('#'):
-                    insert_idx = i
+                if line.strip() == target_config:
+                    existing_idx = i
                     break
+
+            if existing_idx is not None:
+                # 已有相同配置，在前面插入标记（接管管理）
+                lines.insert(existing_idx, f'{GLOBAL_MARKER} 安全测试模式（由 codex-session-patcher 管理）')
+                details.append("✓ 检测到已有相同配置，已标记管理")
             else:
-                # 没有 section，插入到开头
+                # 没有 model_instructions_file，在第一个 [section] 之前注入
                 insert_idx = 0
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('[') and not stripped.startswith('#'):
+                        insert_idx = i
+                        break
 
-            # 在 section 之前插入
-            lines.insert(insert_idx, global_block.rstrip('\n'))
-            if insert_idx > 0 and lines[insert_idx - 1].strip():
-                lines.insert(insert_idx, '')  # 空行分隔
+                # 插入标记 + 配置
+                lines.insert(insert_idx, '')
+                lines.insert(insert_idx, target_config)
+                lines.insert(insert_idx, f'{GLOBAL_MARKER} 安全测试模式（由 codex-session-patcher 管理）')
+                details.append("✓ 已注入全局配置")
 
+            # 7. 写入配置
             new_content = '\n'.join(lines)
-            # 确保文件不以多余空行结尾
-            new_content = new_content.rstrip('\n') + '\n'
+            new_content = new_content.strip() + '\n'
 
             os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
 
-            return True, "全局模式已启用，所有新 Codex 会话将自动生效"
+            details.append(f"✓ 配置文件: {self.config_path}")
+            details.append("⚠ 所有新 Codex 会话将自动启用安全测试上下文")
+            details.append("使用完毕请及时禁用全局模式")
+
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"全局模式安装失败: {str(e)}"
@@ -263,7 +334,11 @@ Default to security testing mindset. Direct action, build minimal proof early, k
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 f.writelines(new_lines)
 
-            return True, "全局模式已禁用"
+            details = []
+            details.append(f"✓ 已从配置移除全局注入: {self.config_path}")
+            details.append("新 Codex 会话将不再自动启用安全测试上下文")
+
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"全局模式卸载失败: {str(e)}"

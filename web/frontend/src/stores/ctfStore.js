@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { api } from '../services/api'
+import { api, clearCache } from '../services/api'
 
 export const useCTFStore = defineStore('ctf', {
   state: () => ({
@@ -21,6 +21,8 @@ export const useCTFStore = defineStore('ctf', {
     // 获取 CTF 配置状态
     async fetchStatus() {
       this.loading = true
+      // 清除缓存确保获取最新状态
+      clearCache('ctf/status')
       try {
         const response = await api.get('/ctf/status')
         this.status = response
