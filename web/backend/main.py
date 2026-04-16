@@ -3,10 +3,15 @@ FastAPI 主入口
 """
 
 import os
+import mimetypes
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
+# 修复 Windows 上 .js 文件 MIME 类型错误的问题
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 from .api import router
 
