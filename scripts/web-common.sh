@@ -292,6 +292,7 @@ web_port_in_use() {
     local python_bin="$3"
 
     "$python_bin" - "$host" "$port" <<'PY'
+import errno
 import socket
 import sys
 
@@ -301,8 +302,13 @@ family = socket.AF_INET6 if ":" in host else socket.AF_INET
 sock = socket.socket(family, socket.SOCK_STREAM)
 try:
     sock.bind((host, port))
-except OSError:
-    raise SystemExit(0)
+except OSError as exc:
+    if exc.errno == errno.EADDRINUSE:
+        raise SystemExit(0)
+
+    message = exc.strerror or str(exc)
+    print(f"Cannot bind to {host}:{port}: {message}", file=sys.stderr)
+    raise SystemExit(2)
 else:
     raise SystemExit(1)
 finally:
@@ -314,10 +320,26 @@ web_find_available_port() {
     local port="$1"
     local host="$2"
     local python_bin="$3"
+    local status
 
-    while web_port_in_use "$port" "$host" "$python_bin"; do
-        port=$((port + 1))
+    while true; do
+        if web_port_in_use "$port" "$host" "$python_bin"; then
+            status=0
+        else
+            status=$?
+        fi
+
+        case "$status" in
+            0)
+                port=$((port + 1))
+                ;;
+            1)
+                printf '%s\n' "$port"
+                return 0
+                ;;
+            *)
+                return "$status"
+                ;;
+        esac
     done
-
-    printf '%s\n' "$port"
 }

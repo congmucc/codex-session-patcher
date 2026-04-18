@@ -127,6 +127,31 @@ def test_find_available_port_checks_requested_host_without_lsof(tmp_path: Path):
     assert result.stdout.strip() == str(port + 1)
 
 
+def test_find_available_port_fails_fast_for_non_bindable_host():
+    script = "\n".join(
+        [
+            f"source {shlex.quote(str(WEB_COMMON))}",
+            f'PYTHON_BIN={shlex.quote(sys.executable)}',
+            'web_find_available_port "39019" "203.0.113.10" "$PYTHON_BIN"',
+        ]
+    )
+
+    try:
+        result = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail\n{script}"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"web_find_available_port hung for a non-bindable host: {exc}")
+
+    assert result.returncode != 0
+    assert "203.0.113.10" in result.stderr
+
+
 def test_pick_python_bin_supports_versioned_interpreter_names(tmp_path: Path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
