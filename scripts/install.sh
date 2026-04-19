@@ -22,19 +22,40 @@ echo "检测到 Python: $PYTHON_BIN ($(web_python_version_string "$PYTHON_BIN"))
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-SCRIPT_PATH="$PROJECT_DIR/codex_patcher.py"
+MODULE_ENTRY="$PROJECT_DIR/codex_session_patcher/cli.py"
 TARGET_PATH="$BIN_DIR/codex-patcher"
 
-if [ ! -f "$SCRIPT_PATH" ]; then
-    echo "错误: 未找到入口脚本 $SCRIPT_PATH"
+if [ ! -f "$MODULE_ENTRY" ]; then
+    echo "错误: 未找到入口脚本 $MODULE_ENTRY"
     exit 1
 fi
 
 echo "安装路径: $TARGET_PATH"
 
+printf -v ESCAPED_PROJECT_DIR '%q' "$PROJECT_DIR"
+printf -v ESCAPED_SCRIPT_DIR '%q' "$SCRIPT_DIR"
+
 cat > "$TARGET_PATH" << EOF
 #!/bin/bash
-exec "$PYTHON_BIN" "$SCRIPT_PATH" "\$@"
+set -euo pipefail
+
+PROJECT_DIR=$ESCAPED_PROJECT_DIR
+SCRIPT_DIR=$ESCAPED_SCRIPT_DIR
+
+source "\$SCRIPT_DIR/web-common.sh"
+
+PYTHON_BIN="\${CODEX_SESSION_PATCHER_PYTHON:-}"
+if [ -z "\$PYTHON_BIN" ]; then
+    PYTHON_BIN="\$(web_pick_python_bin || true)"
+fi
+
+if [ -z "\$PYTHON_BIN" ]; then
+    echo "错误: 未找到可用的 Python 3.8+ 解释器" >&2
+    exit 1
+fi
+
+export PYTHONPATH="\$PROJECT_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
+exec "\$PYTHON_BIN" -m codex_session_patcher.cli "\$@"
 EOF
 
 chmod +x "$TARGET_PATH"
@@ -52,7 +73,8 @@ echo ""
 echo "=== 安装完成 ==="
 echo ""
 echo "使用方法:"
-echo "    codex-patcher               # 执行基本清洗"
-echo "    codex-patcher --auto-resume # 清洗后自动 resume"
+echo "    codex-patcher --latest      # 清理最新会话"
+echo "    codex-patcher --all         # 清理所有会话"
+echo "    codex-patcher --web         # 启动 Web UI"
 echo "    codex-patcher --help        # 查看帮助"
 echo ""

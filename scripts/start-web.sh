@@ -41,11 +41,11 @@ fi
 NEED_FRONTEND_BUILD=0
 NEED_FRONTEND_DEPS_INSTALL=0
 
-if web_frontend_build_need_run; then
+if web_frontend_build_need_run "$PYTHON_BIN"; then
     NEED_FRONTEND_BUILD=1
 fi
 
-if [ "$NEED_FRONTEND_BUILD" -eq 1 ] && web_frontend_deps_need_install; then
+if [ "$NEED_FRONTEND_BUILD" -eq 1 ] && web_frontend_deps_need_install "$PYTHON_BIN"; then
     NEED_FRONTEND_DEPS_INSTALL=1
 fi
 

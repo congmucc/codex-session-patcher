@@ -42,6 +42,14 @@ def vite_proxy_test_ready(*, frontend_dir: Path = FRONTEND_DIR, node_bin: str | 
     return all(path.exists() for path in required_packages)
 
 
+def link_host_tool(fake_bin: Path, tool: str):
+    tool_path = shutil.which(tool)
+    if not tool_path:
+        pytest.skip(f"{tool} is required for this test")
+
+    (fake_bin / tool).symlink_to(tool_path)
+
+
 def find_non_loopback_ipv4() -> str | None:
     candidates: list[str] = []
 
@@ -97,8 +105,7 @@ def test_find_available_port_checks_requested_host_without_lsof(tmp_path: Path):
     fake_bin.mkdir()
 
     for tool in ("awk", "dirname"):
-        tool_path = fake_bin / tool
-        tool_path.symlink_to(Path("/usr/bin") / tool)
+        link_host_tool(fake_bin, tool)
 
     python_bin = fake_bin / "python3"
     python_bin.symlink_to(Path(sys.executable))
@@ -152,14 +159,41 @@ def test_find_available_port_fails_fast_for_non_bindable_host():
     assert "203.0.113.10" in result.stderr
 
 
+def test_find_available_port_checks_localhost_across_address_families():
+    listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        listener.bind(("::1", 0))
+    except OSError:
+        listener.close()
+        pytest.skip("IPv6 localhost listener is required for this test")
+
+    listener.listen()
+    port = listener.getsockname()[1]
+
+    try:
+        result = run_bash(
+            "\n".join(
+                [
+                    f"source {shlex.quote(str(WEB_COMMON))}",
+                    f'PYTHON_BIN={shlex.quote(sys.executable)}',
+                    f'PORT=$(web_find_available_port "{port}" "localhost" "$PYTHON_BIN")',
+                    'printf "%s\\n" "$PORT"',
+                ]
+            )
+        )
+    finally:
+        listener.close()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(port + 1)
+
+
 def test_pick_python_bin_supports_versioned_interpreter_names(tmp_path: Path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
 
-    awk_bin = fake_bin / "awk"
-    awk_bin.symlink_to(Path("/usr/bin/awk"))
-    dirname_bin = fake_bin / "dirname"
-    dirname_bin.symlink_to(Path("/usr/bin/dirname"))
+    for tool in ("awk", "dirname"):
+        link_host_tool(fake_bin, tool)
 
     versioned_python = fake_bin / "python3.13"
     versioned_python.symlink_to(Path(sys.executable))
@@ -198,10 +232,8 @@ def test_pick_python_bin_supports_py_launcher(tmp_path: Path):
     fake_bin.mkdir()
     state_dir.mkdir()
 
-    awk_bin = fake_bin / "awk"
-    awk_bin.symlink_to(Path("/usr/bin/awk"))
-    dirname_bin = fake_bin / "dirname"
-    dirname_bin.symlink_to(Path("/usr/bin/dirname"))
+    for tool in ("awk", "dirname"):
+        link_host_tool(fake_bin, tool)
 
     py_launcher = fake_bin / "py"
     py_launcher.write_text(
@@ -315,8 +347,9 @@ def test_frontend_install_required_when_package_lock_is_newer(tmp_path: Path):
         "\n".join(
             [
                 f"source {shlex.quote(str(WEB_COMMON))}",
+                f'PYTHON_BIN={shlex.quote(sys.executable)}',
                 f"FRONTEND_DIR={shlex.quote(str(frontend_dir))}",
-                'if web_frontend_deps_need_install; then echo install; else echo skip; fi',
+                'if web_frontend_deps_need_install "$PYTHON_BIN"; then echo install; else echo skip; fi',
             ]
         )
     )
@@ -354,15 +387,63 @@ def test_frontend_install_is_skipped_without_npm_hidden_lock_when_tree_is_curren
         "\n".join(
             [
                 f"source {shlex.quote(str(WEB_COMMON))}",
+                f'PYTHON_BIN={shlex.quote(sys.executable)}',
                 f"FRONTEND_DIR={shlex.quote(str(frontend_dir))}",
                 f"WEB_STATE_DIR={shlex.quote(str(state_dir))}",
-                'if web_frontend_deps_need_install; then echo install; else echo skip; fi',
+                'if web_frontend_deps_need_install "$PYTHON_BIN"; then echo install; else echo skip; fi',
             ]
         )
     )
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "skip"
+
+
+def test_frontend_install_required_when_runtime_packages_are_missing_despite_fresh_stamp(tmp_path: Path):
+    frontend_dir = tmp_path / "frontend"
+    state_dir = tmp_path / "state"
+    frontend_dir.mkdir()
+    state_dir.mkdir()
+
+    node_modules = frontend_dir / "node_modules"
+    (node_modules / ".bin").mkdir(parents=True)
+    (node_modules / "vite").mkdir(parents=True)
+    (node_modules / "@vitejs" / "plugin-vue").mkdir(parents=True)
+
+    vite_file = node_modules / ".bin" / "vite"
+    vite_file.write_text("#!/bin/sh\n", encoding="utf-8")
+    vite_file.chmod(vite_file.stat().st_mode | stat.S_IXUSR)
+    (node_modules / "vite" / "package.json").write_text("{}", encoding="utf-8")
+    (node_modules / "@vitejs" / "plugin-vue" / "package.json").write_text("{}", encoding="utf-8")
+
+    package_json = frontend_dir / "package.json"
+    package_lock = frontend_dir / "package-lock.json"
+    package_json.write_text((FRONTEND_DIR / "package.json").read_text(encoding="utf-8"), encoding="utf-8")
+    package_lock.write_text("{}", encoding="utf-8")
+
+    stamp = state_dir / "frontend-deps.stamp"
+    stamp.write_text("ok", encoding="utf-8")
+
+    old = time.time() - 60
+    new = time.time()
+    os.utime(package_json, (old, old))
+    os.utime(package_lock, (old, old))
+    os.utime(stamp, (new, new))
+
+    result = run_bash(
+        "\n".join(
+            [
+                f"source {shlex.quote(str(WEB_COMMON))}",
+                f'PYTHON_BIN={shlex.quote(sys.executable)}',
+                f"FRONTEND_DIR={shlex.quote(str(frontend_dir))}",
+                f"WEB_STATE_DIR={shlex.quote(str(state_dir))}",
+                'if web_frontend_deps_need_install "$PYTHON_BIN"; then echo install; else echo skip; fi',
+            ]
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "install"
 
 
 def test_frontend_build_is_skipped_when_dist_is_current(tmp_path: Path):
@@ -407,6 +488,103 @@ def test_frontend_build_is_skipped_when_dist_is_current(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "skip"
+
+
+def test_frontend_build_runs_when_source_file_is_deleted_after_dist(tmp_path: Path):
+    frontend_dir = tmp_path / "frontend"
+    dist_dir = frontend_dir / "dist"
+    src_dir = frontend_dir / "src"
+    dist_dir.mkdir(parents=True)
+    src_dir.mkdir()
+
+    tracked_paths = [
+        frontend_dir / "index.html",
+        frontend_dir / "package.json",
+        frontend_dir / "package-lock.json",
+        frontend_dir / "vite.config.js",
+        src_dir / "main.js",
+    ]
+    for path in tracked_paths:
+        path.write_text("content", encoding="utf-8")
+
+    dist_entry = dist_dir / "index.html"
+    dist_entry.write_text("dist", encoding="utf-8")
+
+    old = time.time() - 60
+    new = time.time()
+    for path in tracked_paths:
+        os.utime(path, (old, old))
+    os.utime(dist_entry, (new, new))
+
+    (src_dir / "main.js").unlink()
+    os.utime(src_dir, (new + 5, new + 5))
+
+    result = run_bash(
+        "\n".join(
+            [
+                f"source {shlex.quote(str(WEB_COMMON))}",
+                f"FRONTEND_DIR={shlex.quote(str(frontend_dir))}",
+                f"FRONTEND_DIST_DIR={shlex.quote(str(dist_dir))}",
+                'if web_frontend_build_need_run; then echo build; else echo skip; fi',
+            ]
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "build"
+
+
+def test_frontend_build_runs_when_dist_assets_are_missing(tmp_path: Path):
+    frontend_dir = tmp_path / "frontend"
+    dist_dir = frontend_dir / "dist"
+    assets_dir = dist_dir / "assets"
+    src_dir = frontend_dir / "src"
+    dist_dir.mkdir(parents=True)
+    assets_dir.mkdir()
+    src_dir.mkdir()
+
+    for path in [
+        frontend_dir / "index.html",
+        frontend_dir / "package.json",
+        frontend_dir / "package-lock.json",
+        frontend_dir / "vite.config.js",
+        src_dir / "main.js",
+    ]:
+        path.write_text("content", encoding="utf-8")
+
+    asset_file = assets_dir / "app.js"
+    asset_file.write_text("console.log('ok')", encoding="utf-8")
+    dist_entry = dist_dir / "index.html"
+    dist_entry.write_text('<script type="module" src="/assets/app.js"></script>', encoding="utf-8")
+
+    old = time.time() - 60
+    new = time.time()
+    for path in [
+        frontend_dir / "index.html",
+        frontend_dir / "package.json",
+        frontend_dir / "package-lock.json",
+        frontend_dir / "vite.config.js",
+        src_dir / "main.js",
+    ]:
+        os.utime(path, (old, old))
+    os.utime(asset_file, (new, new))
+    os.utime(dist_entry, (new, new))
+
+    asset_file.unlink()
+
+    result = run_bash(
+        "\n".join(
+            [
+                f"source {shlex.quote(str(WEB_COMMON))}",
+                f"FRONTEND_DIR={shlex.quote(str(frontend_dir))}",
+                f"FRONTEND_DIST_DIR={shlex.quote(str(dist_dir))}",
+                'if web_frontend_build_need_run; then echo build; else echo skip; fi',
+            ]
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "build"
 
 
 def test_start_web_skips_node_requirement_when_frontend_assets_are_current(tmp_path: Path):
@@ -583,14 +761,42 @@ def test_vite_proxy_uses_backend_env_overrides():
     assert result.stdout.strip() == "http://0.0.0.0:9090"
 
 
+@pytest.mark.skipif(
+    not vite_proxy_test_ready(),
+    reason="node and frontend deps are required for vite config test",
+)
+def test_vite_proxy_wraps_ipv6_backend_host():
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            (
+                "const config = (await import('./web/frontend/vite.config.js')).default;"
+                "console.log(config.server.proxy['/api'].target);"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "BACKEND_HOST": "::1", "BACKEND_PORT": "9090"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "http://[::1]:9090"
+
+
 def test_install_script_creates_working_wrapper_with_py_launcher(tmp_path: Path):
     project_dir = tmp_path / "project"
     scripts_dir = project_dir / "scripts"
+    package_dir = project_dir / "codex_session_patcher"
     home_dir = tmp_path / "home"
     state_dir = tmp_path / "state"
     fake_bin = tmp_path / "bin"
 
     scripts_dir.mkdir(parents=True)
+    package_dir.mkdir()
     home_dir.mkdir()
     state_dir.mkdir()
     fake_bin.mkdir()
@@ -598,7 +804,8 @@ def test_install_script_creates_working_wrapper_with_py_launcher(tmp_path: Path)
     shutil.copy2(REPO_ROOT / "scripts" / "install.sh", scripts_dir / "install.sh")
     shutil.copy2(REPO_ROOT / "scripts" / "web-common.sh", scripts_dir / "web-common.sh")
 
-    (project_dir / "codex_patcher.py").write_text(
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "cli.py").write_text(
         "\n".join(
             [
                 "import sys",
@@ -608,12 +815,9 @@ def test_install_script_creates_working_wrapper_with_py_launcher(tmp_path: Path)
         ),
         encoding="utf-8",
     )
-    script_mode_before = (project_dir / "codex_patcher.py").stat().st_mode
 
-    awk_bin = fake_bin / "awk"
-    awk_bin.symlink_to(Path("/usr/bin/awk"))
-    dirname_bin = fake_bin / "dirname"
-    dirname_bin.symlink_to(Path("/usr/bin/dirname"))
+    for tool in ("awk", "dirname"):
+        link_host_tool(fake_bin, tool)
 
     py_launcher = fake_bin / "py"
     py_launcher.write_text(
@@ -649,8 +853,9 @@ def test_install_script_creates_working_wrapper_with_py_launcher(tmp_path: Path)
 
     wrapper_path = home_dir / ".local" / "bin" / "codex-patcher"
     assert wrapper_path.exists()
-    assert "python-launcher.sh" in wrapper_path.read_text(encoding="utf-8")
-    assert (project_dir / "codex_patcher.py").stat().st_mode == script_mode_before
+    wrapper_contents = wrapper_path.read_text(encoding="utf-8")
+    assert "web-common.sh" in wrapper_contents
+    assert "-m codex_session_patcher.cli" in wrapper_contents
 
     wrapper_run = subprocess.run(
         [str(wrapper_path), "abc"],
@@ -673,15 +878,18 @@ def test_install_script_creates_working_wrapper_with_py_launcher(tmp_path: Path)
 def test_install_script_wrapper_supports_spaces_in_project_path(tmp_path: Path):
     project_dir = tmp_path / "project with spaces"
     scripts_dir = project_dir / "scripts"
+    package_dir = project_dir / "codex_session_patcher"
     home_dir = tmp_path / "home"
 
     scripts_dir.mkdir(parents=True)
+    package_dir.mkdir()
     home_dir.mkdir()
 
     shutil.copy2(REPO_ROOT / "scripts" / "install.sh", scripts_dir / "install.sh")
     shutil.copy2(REPO_ROOT / "scripts" / "web-common.sh", scripts_dir / "web-common.sh")
 
-    (project_dir / "codex_patcher.py").write_text(
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "cli.py").write_text(
         "\n".join(
             [
                 "import sys",
@@ -735,6 +943,29 @@ def test_web_state_dir_uses_gitdir_for_worktree_checkout(tmp_path: Path):
 
     shutil.copy2(REPO_ROOT / "scripts" / "web-common.sh", scripts_dir / "web-common.sh")
     (project_dir / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", "-c", "source scripts/web-common.sh && web_state_dir"],
+        cwd=project_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(git_dir / "web-runtime")
+
+
+def test_web_state_dir_trims_carriage_return_from_worktree_gitdir(tmp_path: Path):
+    project_dir = tmp_path / "project"
+    scripts_dir = project_dir / "scripts"
+    git_dir = tmp_path / "git-store" / "worktrees" / "demo"
+
+    scripts_dir.mkdir(parents=True)
+    git_dir.mkdir(parents=True)
+
+    shutil.copy2(REPO_ROOT / "scripts" / "web-common.sh", scripts_dir / "web-common.sh")
+    (project_dir / ".git").write_text(f"gitdir: {git_dir}\r\n", encoding="utf-8", newline="")
 
     result = subprocess.run(
         ["bash", "-c", "source scripts/web-common.sh && web_state_dir"],

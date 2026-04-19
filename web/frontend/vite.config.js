@@ -3,6 +3,8 @@ import vue from '@vitejs/plugin-vue'
 
 const backendHost = process.env.BACKEND_HOST || '127.0.0.1'
 const backendPort = process.env.BACKEND_PORT || '8080'
+const normalizedBackendHost =
+  backendHost.includes(':') && !backendHost.startsWith('[') ? `[${backendHost}]` : backendHost
 
 export default defineConfig({
   plugins: [vue()],
@@ -10,7 +12,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: `http://${backendHost}:${backendPort}`,
+        target: `http://${normalizedBackendHost}:${backendPort}`,
         changeOrigin: true
       }
     }

@@ -112,6 +112,7 @@ web_state_dir() {
     elif [ -f "$PROJECT_DIR/.git" ]; then
         git_dir="$(sed -n 's/^gitdir: //p' "$PROJECT_DIR/.git" | head -n 1)"
         if [ -n "$git_dir" ]; then
+            git_dir="${git_dir%$'\r'}"
             case "$git_dir" in
                 /*) ;;
                 *) git_dir="$PROJECT_DIR/$git_dir" ;;
@@ -205,7 +206,12 @@ web_python_deps_need_install() {
 }
 
 web_frontend_deps_need_install() {
-    local stamp_file node_modules_mtime
+    local python_bin="${1:-${PYTHON_BIN:-}}"
+    local stamp_file
+
+    if [ -z "$python_bin" ]; then
+        python_bin="$(web_pick_python_bin || true)"
+    fi
 
     stamp_file="$(web_frontend_deps_stamp)"
 
@@ -218,6 +224,27 @@ web_frontend_deps_need_install() {
     fi
 
     if [ ! -x "$FRONTEND_DIR/node_modules/.bin/vite" ]; then
+        return 0
+    fi
+
+    if [ -n "$python_bin" ] && ! FRONTEND_DIR="$FRONTEND_DIR" "$python_bin" - <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+frontend_dir = os.environ["FRONTEND_DIR"]
+package_json_path = os.path.join(frontend_dir, "package.json")
+
+with open(package_json_path, encoding="utf-8") as handle:
+    package_json = json.load(handle)
+
+for section in ("dependencies", "devDependencies"):
+    for package_name in package_json.get(section, {}):
+        package_path = os.path.join(frontend_dir, "node_modules", *package_name.split("/"), "package.json")
+        if not os.path.isfile(package_path):
+            raise SystemExit(1)
+PY
+    then
         return 0
     fi
 
@@ -262,6 +289,10 @@ web_frontend_sources_newer_than_dist() {
     done
 
     for source_dir in "$FRONTEND_DIR/src" "$FRONTEND_DIR/public"; do
+        if [ -d "$source_dir" ] && [ "$source_dir" -nt "$dist_entry" ]; then
+            return 0
+        fi
+
         if [ -d "$source_dir" ] && find "$source_dir" -type f -newer "$dist_entry" -print -quit | grep -q .; then
             return 0
         fi
@@ -270,12 +301,68 @@ web_frontend_sources_newer_than_dist() {
     return 1
 }
 
+web_frontend_dist_ready() {
+    local python_bin="${1:-${PYTHON_BIN:-}}"
+
+    if [ ! -f "$FRONTEND_DIST_DIR/index.html" ]; then
+        return 1
+    fi
+
+    if [ -z "$python_bin" ]; then
+        python_bin="$(web_pick_python_bin || true)"
+    fi
+
+    if [ -z "$python_bin" ]; then
+        return 1
+    fi
+
+    FRONTEND_DIST_DIR="$FRONTEND_DIST_DIR" "$python_bin" - <<'PY' >/dev/null 2>&1
+import html.parser
+import os
+import sys
+
+dist_dir = os.environ["FRONTEND_DIST_DIR"]
+index_path = os.path.join(dist_dir, "index.html")
+
+if not os.path.isfile(index_path):
+    raise SystemExit(1)
+
+class AssetParser(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.paths = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        for key in ("src", "href"):
+            value = attrs.get(key)
+            if not value:
+                continue
+            if value.startswith(("http://", "https://", "data:", "//", "#")):
+                continue
+            self.paths.append(value)
+
+parser = AssetParser()
+with open(index_path, encoding="utf-8") as handle:
+    parser.feed(handle.read())
+
+for path in parser.paths:
+    relative = path.lstrip("/")
+    if not relative:
+        continue
+    if not os.path.isfile(os.path.join(dist_dir, relative)):
+        raise SystemExit(1)
+PY
+}
+
 web_frontend_build_need_run() {
+    local python_bin="${1:-${PYTHON_BIN:-}}"
+
     if [ "${WEB_FORCE_FRONTEND_BUILD:-0}" = "1" ]; then
         return 0
     fi
 
-    if [ ! -f "$FRONTEND_DIST_DIR/index.html" ]; then
+    if ! web_frontend_dist_ready "$python_bin"; then
         return 0
     fi
 
@@ -298,21 +385,50 @@ import sys
 
 host = sys.argv[1]
 port = int(sys.argv[2])
-family = socket.AF_INET6 if ":" in host else socket.AF_INET
-sock = socket.socket(family, socket.SOCK_STREAM)
-try:
-    sock.bind((host, port))
-except OSError as exc:
-    if exc.errno == errno.EADDRINUSE:
-        raise SystemExit(0)
 
-    message = exc.strerror or str(exc)
-    print(f"Cannot bind to {host}:{port}: {message}", file=sys.stderr)
+try:
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+except socket.gaierror as exc:
+    print(f"Cannot resolve {host}:{port}: {exc}", file=sys.stderr)
     raise SystemExit(2)
-else:
+
+seen = set()
+had_bindable_target = False
+last_error = None
+
+for family, socktype, proto, _canonname, sockaddr in infos:
+    key = (family, sockaddr[0], sockaddr[1])
+    if key in seen:
+        continue
+    seen.add(key)
+
+    try:
+        sock = socket.socket(family, socktype, proto)
+    except OSError as exc:
+        last_error = exc
+        continue
+
+    try:
+        sock.bind(sockaddr)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise SystemExit(0)
+        last_error = exc
+        continue
+    else:
+        had_bindable_target = True
+    finally:
+        sock.close()
+
+if had_bindable_target:
     raise SystemExit(1)
-finally:
-    sock.close()
+
+message = "host is not bindable"
+if last_error is not None:
+    message = last_error.strerror or str(last_error)
+
+print(f"Cannot bind to {host}:{port}: {message}", file=sys.stderr)
+raise SystemExit(2)
 PY
 }
 

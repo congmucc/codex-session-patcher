@@ -50,7 +50,7 @@ else
     echo "📦 Python Web 依赖已就绪，跳过安装"
 fi
 
-if web_frontend_deps_need_install; then
+if web_frontend_deps_need_install "$PYTHON_BIN"; then
     echo "📦 安装前端依赖..."
     cd "$FRONTEND_DIR"
     npm install
